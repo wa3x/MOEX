@@ -66,12 +66,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/wa3x/MOEX/master/install.sh)
 
 ## Ручная установка
 
+```
 git clone https://github.com/wa3x/MOEX.git
 cd MOEX
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python main.py
+```
 
 ---
 
