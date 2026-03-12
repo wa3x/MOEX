@@ -6,7 +6,7 @@ from PyQt6.QtCore import QPointF, Qt
 from charts.candlestick_item import CandlestickItem
 from charts.crosshair import ChartCrosshair
 from data.models import CandlePoint
-
+from datetime import datetime
 
 class PriceChart(pg.PlotWidget):
     """
@@ -184,16 +184,23 @@ class PriceChart(pg.PlotWidget):
 
     def _build_bottom_ticks(self, points: list[CandlePoint]) -> list[tuple[int, str]]:
         """
-        Построить подписи для нижней оси X так, чтобы они не слипались.
+        Построить подписи нижней оси X в более читаемом виде.
 
-        Логика:
-        - для маленького числа свечей можно показывать больше подписей;
-        - для плотных внутридневных графиков подписей должно быть меньше;
-        - если в выборке есть последняя свеча, её полезно тоже показать.
+        Основная идея:
+        - не перегружать ось длинными подписями;
+        - на внутридневных графиках в обычных тиках показывать только время;
+        - дату показывать только в первой точке нового дня;
+        - обязательно включать последнюю свечу, чтобы правый край графика
+          не оставался без подписи.
+
+        Ожидаемый эффект:
+        вместо множества длинных строк вида "12.03 22:50" пользователь видит
+        компактные подписи времени, а дата появляется только там, где это
+        действительно полезно для ориентации по графику.
 
         Args:
             points:
-                Список свечей, уже подготовленных для отображения.
+                Список свечей для отображения.
 
         Returns:
             Список тиков в формате pyqtgraph:
@@ -203,25 +210,111 @@ class PriceChart(pg.PlotWidget):
         if total == 0:
             return []
 
-        # Целимся примерно в 5-6 подписей по оси.
-        # Это заметно лучше, чем 8 длинных подписей,
-        # которые начинают наслаиваться друг на друга.
         target_tick_count = 5
-
         step = max(1, total // target_tick_count)
 
         ticks: list[tuple[int, str]] = []
         used_indexes: set[int] = set()
+        previous_tick_date = None
 
         for index in range(0, total, step):
-            ticks.append((index, points[index].label))
+            point = points[index]
+            tick_label = self._format_axis_label(
+                point=point,
+                previous_tick_date=previous_tick_date,
+            )
+
+            ticks.append((index, tick_label))
             used_indexes.add(index)
+
+            point_dt = self._parse_point_datetime(point)
+            previous_tick_date = point_dt.date() if point_dt else None
 
         last_index = total - 1
         if last_index not in used_indexes:
-            ticks.append((last_index, points[last_index].label))
+            last_point = points[last_index]
+            tick_label = self._format_axis_label(
+                point=last_point,
+                previous_tick_date=previous_tick_date,
+            )
+            ticks.append((last_index, tick_label))
 
         return ticks
+
+
+    def _parse_point_datetime(self, point: CandlePoint) -> datetime | None:
+        """
+        Попробовать извлечь datetime из CandlePoint.
+
+        Мы используем подпись point.label, которая формируется ранее
+        по шаблону вроде "%d.%m %H:%M" или "%d.%m.%Y".
+
+        Метод нужен именно для оси X:
+        по дате мы понимаем, когда начался новый день, а по времени
+        можем рисовать более короткие и читаемые подписи.
+
+        Args:
+            point:
+                Точка свечи, подготовленная сервисом данных.
+
+        Returns:
+            datetime, если подпись удалось распарсить, иначе None.
+        """
+        raw_label = (point.label or "").strip()
+        if not raw_label:
+            return None
+
+        formats_to_try = (
+            "%d.%m %H:%M",
+            "%d.%m.%Y %H:%M",
+            "%d.%m.%Y",
+            "%d.%m",
+        )
+
+        for fmt in formats_to_try:
+            try:
+                parsed = datetime.strptime(raw_label, fmt)
+                return parsed
+            except ValueError:
+                continue
+
+        return None
+
+    def _format_axis_label(
+        self,
+        point: CandlePoint,
+        previous_tick_date,
+    ) -> str:
+        """
+        Подготовить компактную подпись для нижней оси X.
+
+        Правила:
+        - если дату распарсить не удалось, возвращаем исходную подпись;
+        - если это первый тик нового дня, показываем дату и время в 2 строки;
+        - если день тот же самый, показываем только время;
+        - если времени нет, показываем хотя бы дату.
+
+        Args:
+            point:
+                Точка свечи.
+            previous_tick_date:
+                Дата предыдущего уже добавленного тика.
+
+        Returns:
+            Строка подписи для оси X.
+        """
+        point_dt = self._parse_point_datetime(point)
+        if point_dt is None:
+            return point.label
+
+        current_date = point_dt.date()
+        date_text = point_dt.strftime("%d.%m")
+        time_text = point_dt.strftime("%H:%M")
+
+        if previous_tick_date != current_date:
+            return f"{date_text}\n{time_text}"
+
+        return time_text
 
 
     def wheelEvent(self, event) -> None:
