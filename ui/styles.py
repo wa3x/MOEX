@@ -62,6 +62,7 @@ QComboBox {
     min-width: 96px;
     font-size: 13px;
     font-weight: 500;
+    combobox-popup: 0;
 }
 
 QComboBox:hover {

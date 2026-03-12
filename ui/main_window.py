@@ -184,6 +184,7 @@ class MoexTickerWindow(QWidget):
         for code, interval in INTERVALS.items():
             self.interval_combo.addItem(code, code)
 
+        self.interval_combo.setMaxVisibleItems(self.interval_combo.count())
         self.interval_combo.setCurrentText("1H")
         self.interval_combo.currentIndexChanged.connect(self.on_interval_changed)
 
@@ -246,10 +247,6 @@ class MoexTickerWindow(QWidget):
     def _configure_combo_popup_view(self, combo: QComboBox) -> None:
         """
         Назначить QComboBox собственный QListView без рамки и лишних отступов.
-
-        Args:
-            combo:
-                Экземпляр QComboBox, которому нужно назначить popup-view.
         """
         view = QListView(combo)
         view.setStyleSheet(COMBO_POPUP_STYLE)
@@ -257,6 +254,8 @@ class MoexTickerWindow(QWidget):
         view.setSpacing(0)
         view.setUniformItemSizes(True)
         view.setContentsMargins(0, 0, 0, 0)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         if view.viewport() is not None:
             view.viewport().setContentsMargins(0, 0, 0, 0)
@@ -283,6 +282,7 @@ class MoexTickerWindow(QWidget):
         for option in options:
             self.lookback_combo.addItem(option.code, option.code)
 
+        self.lookback_combo.setMaxVisibleItems(self.lookback_combo.count())
         allowed_codes = {option.code for option in options}
 
         if self.current_lookback.code not in allowed_codes:
