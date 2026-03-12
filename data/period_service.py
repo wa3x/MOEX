@@ -10,13 +10,13 @@ INTERVALS: dict[str, CandleInterval] = {
         code="10M",
         title="Свечи 10 минут",
         moex_interval=10,
-        label_format="%d.%m %H:%M",
+        label_format="%d.%m\n%H:%M",
     ),
     "1H": CandleInterval(
         code="1H",
         title="Свечи 1 час",
         moex_interval=60,
-        label_format="%d.%m %H:%M",
+        label_format="%d.%m\n%H:%M",
     ),
     "1D": CandleInterval(
         code="1D",

@@ -79,6 +79,9 @@ class PriceChart(pg.PlotWidget):
         self.getAxis("bottom").setTextPen(pg.mkPen("#a9b0bb"))
         self.getAxis("left").setPen(pg.mkPen("#4e5561"))
         self.getAxis("bottom").setPen(pg.mkPen("#4e5561"))
+        # Для внутридневных интервалов подписи по X будут в две строки
+        # (дата и время), поэтому снизу нужно чуть больше места.
+        self.getAxis("bottom").setHeight(40)
 
     def reset_view(self) -> None:
         """
@@ -167,8 +170,7 @@ class PriceChart(pg.PlotWidget):
             self.hover_label.setText("Наведи мышь на график")
             return
 
-        step = max(1, len(points) // 8)
-        ticks = [(i, points[i].label) for i in range(0, len(points), step)]
+        ticks = self._build_bottom_ticks(points)
         axis.setTicks([ticks])
 
         if force_reset_view:
@@ -178,6 +180,49 @@ class PriceChart(pg.PlotWidget):
 
         if not self.user_has_custom_view:
             self._apply_default_ranges()
+
+
+    def _build_bottom_ticks(self, points: list[CandlePoint]) -> list[tuple[int, str]]:
+        """
+        Построить подписи для нижней оси X так, чтобы они не слипались.
+
+        Логика:
+        - для маленького числа свечей можно показывать больше подписей;
+        - для плотных внутридневных графиков подписей должно быть меньше;
+        - если в выборке есть последняя свеча, её полезно тоже показать.
+
+        Args:
+            points:
+                Список свечей, уже подготовленных для отображения.
+
+        Returns:
+            Список тиков в формате pyqtgraph:
+            [(индекс_свечи, подпись), ...]
+        """
+        total = len(points)
+        if total == 0:
+            return []
+
+        # Целимся примерно в 5-6 подписей по оси.
+        # Это заметно лучше, чем 8 длинных подписей,
+        # которые начинают наслаиваться друг на друга.
+        target_tick_count = 5
+
+        step = max(1, total // target_tick_count)
+
+        ticks: list[tuple[int, str]] = []
+        used_indexes: set[int] = set()
+
+        for index in range(0, total, step):
+            ticks.append((index, points[index].label))
+            used_indexes.add(index)
+
+        last_index = total - 1
+        if last_index not in used_indexes:
+            ticks.append((last_index, points[last_index].label))
+
+        return ticks
+
 
     def wheelEvent(self, event) -> None:
         """
