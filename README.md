@@ -58,7 +58,9 @@ MOEX/
 
 Одной командой:
 
+`
 bash <(curl -fsSL https://raw.githubusercontent.com/wa3x/MOEX/master/install.sh)
+`
 
 Скрипт автоматически:
 
