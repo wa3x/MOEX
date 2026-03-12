@@ -1,4 +1,8 @@
+
+
 # MOEX Widget
+
+![Главное окно виджета](ui/assets/cover.png)
 
 Компактный desktop‑виджет для Linux/KDE с графиком акций Московской биржи.
 
