@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from charts.price_chart import PriceChart
-from config import WINDOW_HEIGHT, WINDOW_WIDTH
+from config import AVAILABLE_TICKERS, WINDOW_HEIGHT, WINDOW_WIDTH
 from data.moex_client import MoexClient
 from data.period_service import (
     INTERVALS,
@@ -34,6 +34,7 @@ from ui.styles import (
     CLOSE_BUTTON_STYLE,
     COMBO_POPUP_STYLE,
     COMBO_STYLE,
+    COMBO_STYLE_SMALL,
     TEXT_CHANGE_NEGATIVE,
     TEXT_CHANGE_POSITIVE,
     TEXT_MUTED,
@@ -97,6 +98,10 @@ class MoexTickerWindow(QWidget):
         """
         super().__init__()
 
+        self.available_tickers = self._build_available_tickers(
+            configured_tickers=AVAILABLE_TICKERS,
+            current_ticker=ticker,
+        )
         self.ticker = ticker.upper()
         self.update_ms = update_ms
         self.client = MoexClient()
@@ -109,6 +114,54 @@ class MoexTickerWindow(QWidget):
         self._setup_timer()
 
         self.refresh_data()
+
+
+    def _build_available_tickers(
+        self,
+        configured_tickers: list[str],
+        current_ticker: str,
+    ) -> list[str]:
+        """
+        Подготовить итоговый список тикеров для выпадающего списка.
+
+        Зачем нужен отдельный метод:
+        - привести все значения к верхнему регистру;
+        - убрать пустые и дублирующиеся элементы;
+        - гарантировать, что текущий тикер тоже будет доступен в UI,
+          даже если его забыли добавить в config.py.
+
+        Args:
+            configured_tickers:
+                Список тикеров из конфигурации.
+            current_ticker:
+                Текущий тикер, переданный в окно при запуске приложения.
+
+        Returns:
+            Очищенный и нормализованный список тикеров.
+        """
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for raw_ticker in configured_tickers:
+            if raw_ticker is None:
+                continue
+
+            ticker = str(raw_ticker).strip().upper()
+            if not ticker:
+                continue
+
+            if ticker in seen:
+                continue
+
+            seen.add(ticker)
+            normalized.append(ticker)
+
+        current_ticker_normalized = str(current_ticker).strip().upper()
+        if current_ticker_normalized and current_ticker_normalized not in seen:
+            normalized.insert(0, current_ticker_normalized)
+
+        return normalized
+
 
     def _setup_window(self) -> None:
         """
@@ -177,8 +230,19 @@ class MoexTickerWindow(QWidget):
 
         controls_row = QHBoxLayout()
 
+        self.ticker_combo = QComboBox()
+        self.ticker_combo.setStyleSheet(COMBO_STYLE)
+        self._configure_combo_popup_view(self.ticker_combo)
+
+        for ticker in self.available_tickers:
+            self.ticker_combo.addItem(ticker, ticker)
+
+        self.ticker_combo.setMaxVisibleItems(self.ticker_combo.count())
+        self.ticker_combo.setCurrentText(self.ticker)
+        self.ticker_combo.currentIndexChanged.connect(self.on_ticker_changed)
+
         self.interval_combo = QComboBox()
-        self.interval_combo.setStyleSheet(COMBO_STYLE)
+        self.interval_combo.setStyleSheet(COMBO_STYLE_SMALL)
         self._configure_combo_popup_view(self.interval_combo)
 
         for code, interval in INTERVALS.items():
@@ -189,7 +253,7 @@ class MoexTickerWindow(QWidget):
         self.interval_combo.currentIndexChanged.connect(self.on_interval_changed)
 
         self.lookback_combo = QComboBox()
-        self.lookback_combo.setStyleSheet(COMBO_STYLE)
+        self.lookback_combo.setStyleSheet(COMBO_STYLE_SMALL)
         self._configure_combo_popup_view(self.lookback_combo)
         self.lookback_combo.currentIndexChanged.connect(self.on_lookback_changed)
 
@@ -200,6 +264,7 @@ class MoexTickerWindow(QWidget):
         )
         self.period_info_label.setStyleSheet(TEXT_MUTED)
 
+        controls_row.addWidget(self.ticker_combo)
         controls_row.addWidget(self.interval_combo)
         controls_row.addWidget(self.lookback_combo)
         controls_row.addWidget(self.period_info_label)
@@ -290,6 +355,40 @@ class MoexTickerWindow(QWidget):
 
         self.lookback_combo.setCurrentText(self.current_lookback.code)
         self.lookback_combo.blockSignals(False)
+
+
+    def on_ticker_changed(self) -> None:
+        """
+        Обработать смену тикера пользователем.
+
+        После смены тикера:
+        - обновляется внутреннее состояние окна;
+        - обновляется заголовок окна и текст в шапке;
+        - сбрасывается масштаб графика, чтобы новый инструмент
+          корректно отобразился целиком;
+        - запускается загрузка новых данных.
+
+        Такой подход делает поведение предсказуемым:
+        пользователь явно видит, что теперь открыт другой инструмент,
+        а график не сохраняет старый zoom от предыдущей бумаги.
+        """
+        selected_ticker = self.ticker_combo.currentData()
+
+        if not selected_ticker:
+            return
+
+        normalized_ticker = str(selected_ticker).upper()
+
+        if normalized_ticker == self.ticker:
+            return
+
+        self.ticker = normalized_ticker
+        self.setWindowTitle(f"{self.ticker} MOEX Widget")
+        self.ticker_label.setText(f"{self.ticker} · MOEX")
+
+        self.chart.reset_view()
+        self.refresh_data()
+
 
     def on_interval_changed(self) -> None:
         """

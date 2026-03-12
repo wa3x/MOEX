@@ -89,6 +89,43 @@ QComboBox::down-arrow {
 }
 """
 
+COMBO_STYLE_SMALL = """
+QComboBox {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #f5f7fa;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 8px 20px 8px 8px;
+    min-width: 44px;
+    font-size: 13px;
+    font-weight: 500;
+    combobox-popup: 0;
+}
+
+QComboBox:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+QComboBox:focus {
+    border: 1px solid rgba(120, 180, 255, 0.35);
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+    border: none;
+    background: transparent;
+}
+
+QComboBox::down-arrow {
+    image: url(ui/assets/chevron_down.svg);
+    width: 10px;
+    height: 10px;
+}
+"""
+
 COMBO_POPUP_STYLE = """
 QListView {
     background-color: #171b22;
