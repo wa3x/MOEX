@@ -107,10 +107,13 @@ create_venv() {
 install_python_deps() {
   log "Устанавливаю Python-зависимости"
   "${VENV_DIR}/bin/pip" install --upgrade pip wheel setuptools
-  "${VENV_DIR}/bin/pip" install \
-    PyQt6 \
-    pyqtgraph \
-    requests
+
+  if [[ -f "${APP_DIR}/requirements.txt" ]]; then
+    "${VENV_DIR}/bin/pip" install -r "${APP_DIR}/requirements.txt"
+  else
+    echo "Ошибка: не найден файл ${APP_DIR}/requirements.txt"
+    exit 1
+  fi
 }
 
 create_launcher() {
