@@ -6,7 +6,6 @@ from PyQt6.QtCore import QPointF, Qt
 from charts.candlestick_item import CandlestickItem
 from charts.crosshair import ChartCrosshair
 from data.models import CandlePoint
-from datetime import datetime
 
 class PriceChart(pg.PlotWidget):
     """
@@ -52,6 +51,7 @@ class PriceChart(pg.PlotWidget):
         self.crosshair = ChartCrosshair(self)
 
         self.scene().sigMouseMoved.connect(self.on_mouse_moved)
+        self.getViewBox().sigXRangeChanged.connect(self._on_x_range_changed)
 
     def _setup_chart(self) -> None:
         """
@@ -170,8 +170,7 @@ class PriceChart(pg.PlotWidget):
             self.hover_label.setText("Наведи мышь на график")
             return
 
-        ticks = self._build_bottom_ticks(points)
-        axis.setTicks([ticks])
+        self._refresh_bottom_axis_ticks()
 
         if force_reset_view:
             self.user_has_custom_view = False
@@ -182,25 +181,28 @@ class PriceChart(pg.PlotWidget):
             self._apply_default_ranges()
 
 
-    def _build_bottom_ticks(self, points: list[CandlePoint]) -> list[tuple[int, str]]:
+    def _build_bottom_ticks(
+        self,
+        points: list[CandlePoint],
+        x_min: float | None = None,
+        x_max: float | None = None,
+    ) -> list[tuple[int, str]]:
         """
-        Построить подписи нижней оси X в более читаемом виде.
+        Построить подписи нижней оси X с учётом текущего масштаба.
 
-        Основная идея:
-        - не перегружать ось длинными подписями;
-        - на внутридневных графиках в обычных тиках показывать только время;
-        - дату показывать только в первой точке нового дня;
-        - обязательно включать последнюю свечу, чтобы правый край графика
-          не оставался без подписи.
-
-        Ожидаемый эффект:
-        вместо множества длинных строк вида "12.03 22:50" пользователь видит
-        компактные подписи времени, а дата появляется только там, где это
-        действительно полезно для ориентации по графику.
+        Идея:
+        - чем больше свечей видно на экране, тем короче и реже подписи;
+        - чем сильнее zoom-in, тем подробнее подписи;
+        - при смене дня можно показывать дату отдельно, чтобы пользователь
+          не терял ориентацию во времени.
 
         Args:
             points:
-                Список свечей для отображения.
+                Полный список свечей графика.
+            x_min:
+                Левая граница видимого диапазона по X.
+            x_max:
+                Правая граница видимого диапазона по X.
 
         Returns:
             Список тиков в формате pyqtgraph:
@@ -210,112 +212,151 @@ class PriceChart(pg.PlotWidget):
         if total == 0:
             return []
 
-        target_tick_count = 5
-        step = max(1, total // target_tick_count)
+        if x_min is None or x_max is None:
+            visible_start = 0
+            visible_end = total - 1
+        else:
+            visible_start = max(0, int(x_min))
+            visible_end = min(total - 1, int(x_max))
+
+        if visible_end < visible_start:
+            return []
+
+        visible_count = visible_end - visible_start + 1
+
+        if visible_count >= 80:
+            target_tick_count = 4
+            label_mode = "date_only"
+        elif visible_count >= 35:
+            target_tick_count = 5
+            label_mode = "time_or_date"
+        elif visible_count >= 15:
+            target_tick_count = 6
+            label_mode = "datetime_on_day_change"
+        else:
+            target_tick_count = 7
+            label_mode = "full_datetime"
+
+        step = max(1, visible_count // target_tick_count)
 
         ticks: list[tuple[int, str]] = []
         used_indexes: set[int] = set()
         previous_tick_date = None
 
-        for index in range(0, total, step):
+        for index in range(visible_start, visible_end + 1, step):
             point = points[index]
             tick_label = self._format_axis_label(
                 point=point,
                 previous_tick_date=previous_tick_date,
+                label_mode=label_mode,
             )
 
             ticks.append((index, tick_label))
             used_indexes.add(index)
+            previous_tick_date = point.dt.date()
 
-            point_dt = self._parse_point_datetime(point)
-            previous_tick_date = point_dt.date() if point_dt else None
-
-        last_index = total - 1
-        if last_index not in used_indexes:
-            last_point = points[last_index]
+        if visible_end not in used_indexes:
+            last_point = points[visible_end]
             tick_label = self._format_axis_label(
                 point=last_point,
                 previous_tick_date=previous_tick_date,
+                label_mode=label_mode,
             )
-            ticks.append((last_index, tick_label))
+            ticks.append((visible_end, tick_label))
 
         return ticks
 
-
-    def _parse_point_datetime(self, point: CandlePoint) -> datetime | None:
-        """
-        Попробовать извлечь datetime из CandlePoint.
-
-        Мы используем подпись point.label, которая формируется ранее
-        по шаблону вроде "%d.%m %H:%M" или "%d.%m.%Y".
-
-        Метод нужен именно для оси X:
-        по дате мы понимаем, когда начался новый день, а по времени
-        можем рисовать более короткие и читаемые подписи.
-
-        Args:
-            point:
-                Точка свечи, подготовленная сервисом данных.
-
-        Returns:
-            datetime, если подпись удалось распарсить, иначе None.
-        """
-        raw_label = (point.label or "").strip()
-        if not raw_label:
-            return None
-
-        formats_to_try = (
-            "%d.%m %H:%M",
-            "%d.%m.%Y %H:%M",
-            "%d.%m.%Y",
-            "%d.%m",
-        )
-
-        for fmt in formats_to_try:
-            try:
-                parsed = datetime.strptime(raw_label, fmt)
-                return parsed
-            except ValueError:
-                continue
-
-        return None
 
     def _format_axis_label(
         self,
         point: CandlePoint,
         previous_tick_date,
+        label_mode: str,
     ) -> str:
         """
-        Подготовить компактную подпись для нижней оси X.
-
-        Правила:
-        - если дату распарсить не удалось, возвращаем исходную подпись;
-        - если это первый тик нового дня, показываем дату и время в 2 строки;
-        - если день тот же самый, показываем только время;
-        - если времени нет, показываем хотя бы дату.
+        Подготовить подпись для оси X в зависимости от текущего масштаба.
 
         Args:
             point:
-                Точка свечи.
+                Свеча, для которой строится подпись.
             previous_tick_date:
                 Дата предыдущего уже добавленного тика.
+            label_mode:
+                Режим отображения подписи. Возможные значения:
+                - date_only
+                - time_or_date
+                - datetime_on_day_change
+                - full_datetime
 
         Returns:
-            Строка подписи для оси X.
+            Готовая строка подписи для оси X.
         """
-        point_dt = self._parse_point_datetime(point)
-        if point_dt is None:
+        current_dt = point.dt
+        current_date = current_dt.date()
+
+        date_text = current_dt.strftime("%d.%m")
+        time_text = current_dt.strftime("%H:%M")
+        full_text = current_dt.strftime("%d.%m\n%H:%M")
+
+        is_daily_candle = (
+            current_dt.hour == 0
+            and current_dt.minute == 0
+            and current_dt.second == 0
+        )
+
+        if is_daily_candle:
             return point.label
 
-        current_date = point_dt.date()
-        date_text = point_dt.strftime("%d.%m")
-        time_text = point_dt.strftime("%H:%M")
+        if label_mode == "date_only":
+            return date_text
 
-        if previous_tick_date != current_date:
-            return f"{date_text}\n{time_text}"
+        if label_mode == "time_or_date":
+            if previous_tick_date != current_date:
+                return date_text
+            return time_text
 
-        return time_text
+        if label_mode == "datetime_on_day_change":
+            if previous_tick_date != current_date:
+                return full_text
+            return time_text
 
+        return full_text
+
+    def _refresh_bottom_axis_ticks(self) -> None:
+        """
+        Пересчитать подписи оси X под текущий видимый диапазон графика.
+
+        Метод вызывается:
+        - после загрузки новых данных;
+        - после zoom;
+        - после drag по оси X;
+        - после сброса масштаба.
+        """
+        axis = self.getAxis("bottom")
+
+        if not self.points:
+            axis.setTicks([[]])
+            return
+
+        (x_min, x_max), _ = self.getViewBox().viewRange()
+        ticks = self._build_bottom_ticks(
+            self.points,
+            x_min=x_min,
+            x_max=x_max,
+        )
+        axis.setTicks([ticks])
+
+    def _on_x_range_changed(self, _view_box, _range) -> None:
+        """
+        Обработать изменение видимого диапазона по X.
+
+        Когда пользователь приближает или двигает график,
+        подписи нижней оси должны адаптироваться под новый масштаб.
+        """
+        if not self.points:
+            return
+
+        self._refresh_bottom_axis_ticks()
 
     def wheelEvent(self, event) -> None:
         """
