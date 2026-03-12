@@ -190,11 +190,11 @@ class PriceChart(pg.PlotWidget):
         """
         Построить подписи нижней оси X с учётом текущего масштаба.
 
-        Идея:
-        - чем больше свечей видно на экране, тем короче и реже подписи;
-        - чем сильнее zoom-in, тем подробнее подписи;
-        - при смене дня можно показывать дату отдельно, чтобы пользователь
-          не терял ориентацию во времени.
+        Логика:
+        - обычные тики расставляются равномерно;
+        - дополнительно всегда пытаемся показать границы дней;
+        - поэтому на 1H / 3D дата не пропадает даже тогда, когда шаг
+          между тиками перепрыгивает через полночь.
 
         Args:
             points:
@@ -230,42 +230,125 @@ class PriceChart(pg.PlotWidget):
         elif visible_count >= 35:
             target_tick_count = 5
             label_mode = "time_or_date"
-        elif visible_count >= 15:
-            target_tick_count = 6
-            label_mode = "datetime_on_day_change"
         else:
-            target_tick_count = 7
-            label_mode = "full_datetime"
+            target_tick_count = 6 if visible_count >= 15 else 7
+            label_mode = "datetime_on_day_change"
 
         step = max(1, visible_count // target_tick_count)
 
+        tick_indexes: set[int] = set()
+
+        # 1. Базовые равномерные тики.
+        for index in range(visible_start, visible_end + 1, step):
+            tick_indexes.add(index)
+
+        # 2. Обязательно добавляем первую и последнюю видимые свечи.
+        tick_indexes.add(visible_start)
+        tick_indexes.add(visible_end)
+
+        # 3. Для внутридневных режимов добавляем первую свечу каждого нового дня.
+        if label_mode != "date_only":
+            previous_date = None
+            for index in range(visible_start, visible_end + 1):
+                current_date = points[index].dt.date()
+                if previous_date is None or current_date != previous_date:
+                    tick_indexes.add(index)
+                previous_date = current_date
+
+        sorted_indexes = sorted(tick_indexes)
+        filtered_indexes = self._filter_tick_indexes_by_spacing(
+            indexes=sorted_indexes,
+            visible_count=visible_count,
+            visible_start=visible_start,
+            visible_end=visible_end,
+            label_mode=label_mode,
+        )
+
         ticks: list[tuple[int, str]] = []
-        used_indexes: set[int] = set()
         previous_tick_date = None
 
-        for index in range(visible_start, visible_end + 1, step):
+        for index in filtered_indexes:
             point = points[index]
             tick_label = self._format_axis_label(
                 point=point,
                 previous_tick_date=previous_tick_date,
                 label_mode=label_mode,
             )
-
             ticks.append((index, tick_label))
-            used_indexes.add(index)
             previous_tick_date = point.dt.date()
-
-        if visible_end not in used_indexes:
-            last_point = points[visible_end]
-            tick_label = self._format_axis_label(
-                point=last_point,
-                previous_tick_date=previous_tick_date,
-                label_mode=label_mode,
-            )
-            ticks.append((visible_end, tick_label))
 
         return ticks
 
+
+    def _filter_tick_indexes_by_spacing(
+        self,
+        indexes: list[int],
+        visible_count: int,
+        visible_start: int,
+        visible_end: int,
+        label_mode: str,
+    ) -> list[int]:
+        """
+        Проредить тики по оси X, чтобы подписи не слипались.
+
+        Почему это нужно:
+        после объединения базовых тиков, первой/последней свечи и границ дней
+        индексы могут оказаться слишком близко друг к другу. Тогда pyqtgraph
+        рисует подписи почти вплотную, и они начинают налезать.
+
+        Логика:
+        - первая и последняя видимые свечи сохраняются всегда;
+        - между соседними тиками выдерживается минимальная дистанция;
+        - для двухстрочных подписей дистанция берётся чуть больше.
+
+        Args:
+            indexes:
+                Отсортированный список индексов-кандидатов.
+            visible_count:
+                Число видимых свечей.
+            visible_start:
+                Индекс первой видимой свечи.
+            visible_end:
+                Индекс последней видимой свечи.
+            label_mode:
+                Текущий режим подписей оси X.
+
+        Returns:
+            Отфильтрованный список индексов.
+        """
+        if not indexes:
+            return []
+
+        if label_mode == "date_only":
+            min_spacing = max(6, visible_count // 5)
+        elif label_mode == "datetime_on_day_change":
+            min_spacing = max(4, visible_count // 8)
+        else:
+            min_spacing = max(3, visible_count // 10)
+
+        filtered: list[int] = []
+        last_kept_index: int | None = None
+
+        for index in indexes:
+            is_edge_tick = index in {visible_start, visible_end}
+
+            if last_kept_index is None:
+                filtered.append(index)
+                last_kept_index = index
+                continue
+
+            if is_edge_tick or (index - last_kept_index) >= min_spacing:
+                filtered.append(index)
+                last_kept_index = index
+
+        # На всякий случай гарантируем наличие правого края.
+        if filtered[-1] != visible_end:
+            if visible_end - filtered[-1] < min_spacing and len(filtered) > 1:
+                filtered[-1] = visible_end
+            else:
+                filtered.append(visible_end)
+
+        return filtered
 
     def _format_axis_label(
         self,
@@ -280,13 +363,12 @@ class PriceChart(pg.PlotWidget):
             point:
                 Свеча, для которой строится подпись.
             previous_tick_date:
-                Дата предыдущего уже добавленного тика.
+                Дата предыдущего уже выведенного тика.
             label_mode:
                 Режим отображения подписи. Возможные значения:
                 - date_only
                 - time_or_date
                 - datetime_on_day_change
-                - full_datetime
 
         Returns:
             Готовая строка подписи для оси X.
@@ -320,7 +402,8 @@ class PriceChart(pg.PlotWidget):
                 return full_text
             return time_text
 
-        return full_text
+        return time_text
+
 
     def _refresh_bottom_axis_ticks(self) -> None:
         """
